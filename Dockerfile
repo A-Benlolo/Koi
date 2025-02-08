@@ -13,11 +13,14 @@ ARG BASHRC=/etc/bash.bashrc
 
 # Install build and development tools
 RUN apt update && \
-    apt upgrade && \
+    apt upgrade -y && \
     apt install -y build-essential \
                    clang \
                    curl \
+                   g++ \
                    git \
+                   libdw-dev \
+                   libelf-dev \
                    libboost-all-dev \
                    libgmp-dev \
                    libpython3-dev \
@@ -84,15 +87,18 @@ RUN useradd -d /home/$USERNAME -m $USERNAME -s /bin/bash && \
     usermod -aG sudo $USERNAME
 
 # Move Triton to user home
-RUN mv $TRITON_ROOT /home/$USERNAME/ && \
-    chown -R 1000:1000 /home/$USERNAME
+RUN mv $TRITON_ROOT /home/$USERNAME/
 
 # Build and install Koi
 RUN cd /home/$USERNAME && \
     git clone https://www.github.com/A-Benlolo/Koi.git Koi && \
     cd Koi && \
     make dev && \
-    echo "export LD_LIBRARY_PATH=~/usr/local/lib:\$LD_LIBRARY_PATH" >> ~/.bashrc
+    make clean && \
+    echo "export LD_LIBRARY_PATH=/usr/local/lib:\$LD_LIBRARY_PATH" >> /home/$USERNAME/.bashrc
+
+# Correct permissions
+RUN chown -R 1000:1000 /home/$USERNAME
 
 
 ##################################################

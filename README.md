@@ -34,7 +34,7 @@ Alternatively, **function hooks** will override calls in the binary code to *exe
 
 ### Bait
 
-To alleviate some workload, **pre-developed function hooks**--called **bait**--are provided. These are intended to perform the original purpose of the function, not perform any special checks. Therefore, it is most beneficial to call on bait functions **after performing your own hook**. For example, checking if `strcpy()` results in an overflow before performing the copy. For an example of this see [Memory Violations](./examples/Memory_Violations).
+To alleviate some workload, **pre-developed function hooks**--called **bait**--are provided. These are intended to perform the original purpose of the function, not perform any special checks. Therefore, it is most beneficial to call on bait functions **after performing your own hook**. For example, checking if `strcpy()` results in an overflow before performing the copy. For an example of this see [String Overflow](./examples/String_Overflow).
 
 
 ### Injection

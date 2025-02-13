@@ -5,17 +5,21 @@ SYSTEM_INCLUDE_DIR = /usr/local/include
 # General variables
 CXX = g++
 CXXFLAGS = -std=c++17 -fPIC -I./include
-SRC = src/Elfivator.cpp src/Swimmer.cpp
+BUILD_DIR = build
+CPP_FILES = $(wildcard src/*.cpp) $(wildcard src/Koi/*.cpp) $(wildcard src/Koi/Bait/*.cpp)
+
 
 # Debug variables
-OBJ_DEBUG = build/debug/obj/Elfivator.o build/debug/obj/Swimmer.o
-SHARED_LIB_DEBUG = build/debug/libkoi.so
+OBJ_DIR_DEBUG = $(BUILD_DIR)/debug/obj
+SHARED_LIB_DEBUG = $(BUILD_DIR)/debug/libkoi.so
 DEBUG_FLAGS = -g -O0
+OBJ_DEBUG = $(CPP_FILES:src/%.cpp=$(OBJ_DIR_DEBUG)/%.o)
 
 # Release variables
-OBJ_RELEASE = build/release/obj/Elfivator.o build/release/obj/Swimmer.o
-SHARED_LIB_RELEASE = build/release/libkoi.so
+OBJ_DIR_RELEASE = $(BUILD_DIR)/release/obj
+SHARED_LIB_RELEASE = $(BUILD_DIR)/release/libkoi.so
 RELEASE_FLAGS = -Os
+OBJ_RELEASE = $(CPP_FILES:src/%.cpp=$(OBJ_DIR_RELEASE)/%.o)
 
 
 # These rules don't create files with their name
@@ -36,28 +40,24 @@ release: $(SHARED_LIB_RELEASE)
 
 
 # Debug object files
-build/debug/obj/Elfivator.o: src/Elfivator.cpp
-	mkdir -p build/debug/obj
-	$(CXX) $(CXXFLAGS) -c $< -o $@
-build/debug/obj/Swimmer.o: src/Swimmer.cpp
-	mkdir -p build/debug/obj
+$(OBJ_DIR_DEBUG)/%.o: src/%.cpp
+	mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # Release object files
-build/release/obj/Elfivator.o: src/Elfivator.cpp
-	mkdir -p build/release/obj
-	$(CXX) $(CXXFLAGS) -c $< -o $@
-build/release/obj/Swimmer.o: src/Swimmer.cpp
-	mkdir -p build/release/obj
+$(OBJ_DIR_RELEASE)/%.o: src/%.cpp
+	mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 
 # Debug Shared library
 $(SHARED_LIB_DEBUG): $(OBJ_DEBUG)
+	mkdir -p $(BUILD_DIR)/debug
 	$(CXX) -shared -o $@ $^ -ltriton -lelf
 
 # Release Shared library
 $(SHARED_LIB_RELEASE): $(OBJ_RELEASE)
+	mkdir -p $(BUILD_DIR)/release
 	$(CXX) -shared -o $@ $^ -ltriton -lelf
 
 
@@ -66,15 +66,15 @@ install: $(SHARED_LIB_RELEASE)
 	sudo cp $(SHARED_LIB_RELEASE) $(SYSTEM_LIB_DIR)
 
 # Install development rule
-dev: include/Swimmer.h
+dev: include/Koi
 	@$(MAKE) install
-	sudo cp include/Swimmer.h $(SYSTEM_INCLUDE_DIR)/Swimmer.h
+	sudo cp -r include/Koi $(SYSTEM_INCLUDE_DIR)/
 
 
 # Uninstall rule
 uninstall:
 	sudo rm -f $(SYSTEM_LIB_DIR)/libkoi.so
-	sudo rm -f $(SYSTEM_INCLUDE_DIR)/Swimmer.h
+	sudo rm -rdf $(SYSTEM_INCLUDE_DIR)/Koi
 
 # Clean rule
 clean:

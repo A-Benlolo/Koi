@@ -93,7 +93,7 @@ RUN mv $TRITON_ROOT /home/$USERNAME/
 RUN cd /home/$USERNAME && \
     git clone https://www.github.com/A-Benlolo/Koi.git Koi && \
     cd Koi && \
-    make dev && \
+    make dev -j$(nproc) && \
     make clean && \
     echo "export LD_LIBRARY_PATH=/usr/local/lib:\$LD_LIBRARY_PATH" >> /home/$USERNAME/.bashrc
 

@@ -2,10 +2,10 @@
 #include <iostream>
 #include <string>
 #include <vector>
-#include <Swimmer.h>
+#include <Koi/swimmer.h>
 
 /** On strncpy, symbolize the dst with n bytes */
-void strncpy(Swimmer *s, triton::uint64 addr) {
+triton::uint64 strncpy(Swimmer *s, triton::uint64 addr) {
     // Get registers that store function call parameters
     auto rdi = s->registers.x86_rdi;
     auto rsi = s->registers.x86_rsi;
@@ -32,6 +32,9 @@ void strncpy(Swimmer *s, triton::uint64 addr) {
             s->cnstrs.push_back(astCtxt->land(asciiLo, asciiHi));
         }
     }
+
+    // A copy of destination is returned
+    return dstAddr;
 }
 
 

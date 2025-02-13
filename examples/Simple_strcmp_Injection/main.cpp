@@ -2,24 +2,12 @@
 #include <iostream>
 #include <string>
 #include <vector>
-#include <Swimmer.h>
-
-
-/** On fgets, symbolize the input with a concrete length */
-void fgets(Swimmer *s, triton::uint64 addr) {
-    auto rdi = s->registers.x86_rdi;
-    auto rsi = s->registers.x86_rsi;
-
-    triton::uint64 n = triton::uint64(s->getConcreteRegisterValue(rsi));
-    triton::uint64 ptr = triton::uint64(s->getConcreteRegisterValue(rdi));
-
-    s->symbolizeNamedMemory("fgets", ptr, addr, n);
-    return;
-}
+#include <Koi/bait.h>
+#include <Koi/swimmer.h>
 
 
 /** On scanf, symbolize the amount of memory that input would take */
-void __isoc99_scanf(Swimmer *s, triton::uint64 addr) {
+triton::uint64 __isoc99_scanf(Swimmer *s, triton::uint64 addr) {
     // Get registers for processing
     auto rdi = s->registers.x86_rdi;
     auto rsi = s->registers.x86_rsi;
@@ -36,12 +24,12 @@ void __isoc99_scanf(Swimmer *s, triton::uint64 addr) {
 
     // Symbolize memory
     s->symbolizeNamedMemoryChunk("__isoc99_scanf", data_ptr, addr, len);
-    return;
+    return 4;
 }
 
 
 /** On strcmp, assert equality at the next jump */
-void strcmp(Swimmer *s, triton::uint64 addr) {
+triton::uint64 strcmp(Swimmer *s, triton::uint64 addr) {
     // Get registers for processing
     auto rdi = s->registers.x86_rdi;
     auto rsi = s->registers.x86_rsi;
@@ -65,13 +53,15 @@ void strcmp(Swimmer *s, triton::uint64 addr) {
 
     // Inject the new jump condition
     s->injectJumpCondition(0x101288, astCtxt->lnot(astCtxt->land(equality)));
+    return 0;
 }
 
 
 /** On putchar, update a global flag */
 static std::string flag = "";
-void putchar(Swimmer *s, triton::uint64 addr) {
+triton::uint64 putchar(Swimmer *s, triton::uint64 addr) {
     flag += triton::uint8(s->getConcreteRegisterValue(s->registers.x86_rdi));
+    return 0;
 }
 
 
@@ -88,7 +78,7 @@ int main(int argc, char *argv[]) {
     swimmer.verbosity = Swimmer::SV_CTRLFLOW;
 
     // Hook library functions
-    swimmer.hookFunction(0x1010d0, fgets);
+    swimmer.hookFunction(0x1010d0, koi_fgets);
     swimmer.hookFunction(0x1010f0, __isoc99_scanf);
     swimmer.hookFunction(0x1010e0, strcmp); // Implements a jump injection
     swimmer.hookFunction(0x1010a0, putchar);

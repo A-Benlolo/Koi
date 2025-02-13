@@ -9,7 +9,7 @@ To execute the example, Koi must be built and installed, either system-wide or l
 
 The [HexRays CTF 2023 Challenge](https://hex-rays.com/blog/free-madame-de-maintenon-ctf-challenge) is a great example of when satisfiable module theory (SMT) must be used to solve path constraints. The natural next step is to automate the solving process through the use of symbolic execution. In this example, you will find:
 
-- Function hook for `strncpy`.
+- Custom function hook for `strncpy`.
 - Instruction hooks to break from loops early.
 - Manually constraining memory to be easily typable.
 
@@ -18,11 +18,22 @@ The [HexRays CTF 2023 Challenge](https://hex-rays.com/blog/free-madame-de-mainte
 
 Where there is key generation, symbolic execution stands as a tool to generate keys. In this [crackmes.one sample](https://crackmes.one/crackme/6784563e4d850ac5f7dc5137) you will find:
 
-- Function hook for `strcpy`
+- Baited function hook for `strcpy`.
 - Instruction hooks to spoof the length of a string.
 - Several jump condition injections.
 - Several dead end definitions.
 - The generation of multiple solutions.
+
+
+## String Overflow
+
+This examples tracks the state of memory is to identify various buffer overflows that can arise from copying a string. More specifically, you will find:
+
+- Custom function hook for `strcpy` to comprehensively detect buffer overflows.
+- Baited function hooks for `fgets` and `strlen` on concrete and symbolic memory.
+- Buffer overflows from stack to stack, heap to heap, and stack to heap.
+- Identify extreme stack-buffer overflows that lead to stack smashing.
+- The analysis of four intentionally vulnerable executables.
 
 
 ## Simple strcmp Injection
@@ -40,6 +51,9 @@ This [crackmes.one sample](https://crackmes.one/crackme/6784f8a84d850ac5f7dc5173
 
 Not all binaries need to be explored to an exit point, as proven in this [crackmes.one sample](https://crackmes.one/crackme/6715466c9b533b4c22bd18bb). Here, the expected input is stored in memory before user input, allowing it to be extracted early on. In this example, you will see:
 
-- Function hook for `strlen` when the string is concrete.
+- Baited function hook for `strlen`.
 - Instruction hook to dump function parameter information.
 - Instruction hook to extract a key from memory.
+
+
+

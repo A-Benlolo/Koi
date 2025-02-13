@@ -2,16 +2,23 @@
 #define SWIMMER_H
 
 #include <triton/context.hpp>
+#include <optional>
+#include "Koi/buffer.h"
+#include "Koi/stackframe.h"
+
 
 class Swimmer: public triton::Context {
 private:
     /* Ease of use constants (temporary) */
     static const uint STACK_START = 0x7ffffffe;
+    static const uint STACK_END   = 0x70000000;
+    static const uint HEAP_START = 0x1000000;
+    static const uint HEAP_END   = 0x2000000;
 
 
     /* Hook typedefs */
     typedef void (*InsnHook)(Swimmer*, triton::arch::Instruction);
-    typedef void (*FuncHook)(Swimmer*, triton::uint64);
+    typedef triton::uint64 (*FuncHook)(Swimmer*, triton::uint64);
 
 
     /* Verbosity typedef */
@@ -23,13 +30,30 @@ private:
     uint depth = 0;
     uint fid = 0;
     std::unordered_map<triton::uint64, std::vector<FuncHook>> funcHooks;
+    std::unordered_map<triton::uint64, Buffer> heapAllocations;
     std::unordered_map<triton::uint64, triton::arch::Instruction> injectedInstructions;
     std::unordered_map<triton::uint64, std::vector<InsnHook>> insnHooks;
+    std::vector<Stackframe> stackframes;
     std::unordered_map<triton::uint64, uint> visits;
 
 
     /**
-     * Handle CALL instructions, respecting unknown memory and hooks
+     * Handle changing of the stack pointer to allocate the stackframe
+     * @param insn - Potential instruction to perform the change.
+     * @return true if the stackframe was allocated
+     */
+    bool __handleStackAllocation(triton::arch::Instruction insn);
+
+
+    /**
+     * Handle accessing of the stack
+     * @param insn - Potential instruction to perform access.
+     * @return true if the stackframe was accessed
+     */
+    bool __handelStackReference(triton::arch::Instruction insn);
+
+    /**
+     * Handle CALL instructions, respecting unknown memory and hooks and injections
      * @param pc - Address of the call instruction
      * @param localFid - Fork ID of the swimmer
      * @param insn - Triggering instruction
@@ -62,9 +86,12 @@ public:
     static const SV_FLAG SV_BRANCH = 0b00001000;
     static const SV_FLAG SV_MODEL  = 0b00010000;
     static const SV_FLAG SV_STOPS  = 0b00100000;
+    static const SV_FLAG SV_ALLOC  = 0b01000000;
+    static const SV_FLAG SV_STACK  = 0b10000000;
     static const SV_FLAG SV_NONE   = 0b00000000;
     static const SV_FLAG SV_ALL    = 0b11111111;
     static const SV_FLAG SV_CTRLFLOW = SV_INSN | SV_BRANCH | SV_STOPS;
+    static const SV_FLAG SV_MEM    = SV_ALLOC | SV_STACK;
 
 
     /* New class members */
@@ -166,8 +193,9 @@ public:
      * @param ptr - Address to be symbolized.
      * @param sink - Address at which the memory was symbolized.
      * @param len - Length of the memory access.
+     * @return the Buffer for the memory.
      */
-    void symbolizeNamedMemory(std::string id, triton::uint64 ptr, triton::uint64 sink, triton::uint64 len);
+    Buffer symbolizeNamedMemory(std::string id, triton::uint64 ptr, triton::uint64 sink, size_t len);
 
 
     /**
@@ -176,8 +204,120 @@ public:
      * @param ptr - Address to be symbolized.
      * @param sink - Address at which the memory was symbolized.
      * @param sz - Size of the memory access.
+     * @return the SharedSymbolicVariable of the memory.
      */
-    void symbolizeNamedMemoryChunk(std::string id, triton::uint64 ptr, triton::uint64 sink, ushort sz);
+    triton::engines::symbolic::SharedSymbolicVariable symbolizeNamedMemoryChunk(std::string id, triton::uint64 ptr, triton::uint64 sink, ushort sz);
+
+
+    /**
+     * Allocate a chunk of heap memory.
+     * @param id - Identifying name for the memory (fgets, strcpy, etc).
+     * @param sink - Address at which the memory was symbolized.
+     * @param len - Length of the memory access.
+     * @return the address the allocation begins at.
+     */
+     triton::uint64 allocateHeapMemory(std::string id, triton::uint64 sink, size_t len);
+
+
+    /**
+     * Free a chunk of heap memory.
+     * @param ptr - Starting address of the chunk.
+     * @param sink - Address at which the buffer can be declared free'd.
+     * @return true if successfully free'd, false if not allocated or already free'd.
+     */
+    bool freeHeapMemory(triton::uint64 ptr, triton::uint64 sink);
+
+
+    /**
+     * Get the origin of a pointer in the heap.
+     * @param ptr - Address of the pointer.
+     * @param strict - If true, the address must start a chunk (default=false)
+     * @return the origin of ptr.
+     */
+    triton::uint64 getHeapOrigin(triton::uint64 ptr, bool strict=false);
+
+
+    /**
+    * Get the sink of a pointer in the heap.
+    * @param ptr - Address of the pointer.
+    * @param strict - If true, the address must start a chunk (default=false)
+    * @return the origin of ptr.
+    */
+    triton::uint64 getHeapSink(triton::uint64 ptr, bool strict=false);
+
+
+    /**
+     * Check if an address of heap memory is live.
+     * @param ptr - Address of the chunk
+     * @param strict - If true, the address must start a chunk (default=false).
+     * @return if the heap memory at ptr is alive.
+     */
+    bool statHeapMemory(triton::uint64 ptr, bool strict=false);
+
+
+    /**
+     * Check if any bytes in a memory range has been allocated
+     * @param ptr - Start of memory range.
+     * @param len - Length of memory range.
+     * @returns true if any bytes [ptr, ptr+len-1] have been allocated.
+     */
+    bool isHeapAllocated(triton::uint64 ptr, size_t len);
+    
+
+    /**
+     * Get the length of an allocation on the heap
+     * @param ptr - Address of the allocation.
+     * @return the length of allocation, including 0 for no allocation.
+     */
+    size_t getAllocatedLength(triton::uint64 ptr);
+
+
+    /**
+     * Get the alias of a Buffer
+     * @param ptr - Address of the buffer.
+     * @return the alias of the buffer, or UNDEFINED if it doesn't exist
+     */
+    std::string getBufferAlias(triton::uint64 ptr);
+
+
+    /**
+     * Get the deduced length of a buffer on the stack.
+     * This is a "best guess" that uses stackframe size and accesses.
+     * @param ptr - Beginning of the buffer.
+     * @return the deduced length of the buffer at ptr on the stack.
+     */
+    size_t getStackBufferLength(triton::uint64 ptr);
+
+
+    /**
+     * Get the current stackframe.
+     * @return the current stackframe, or nullptr if there is no frame.
+     */
+    Stackframe *getStackframe();
+
+
+    /**
+     * Get the stackframe containing an addresss.
+     * @param ptr - Address that the stackframe should contain.
+     * @return the size of the requested stackframe, or nullptr if there is no frame.
+     */
+    Stackframe *getStackframe(triton::uint64 ptr);
+
+
+    /**
+     * Check if an address belongs to the current stackframe.
+     * @param ptr - Address to check.
+     * @return true if the address is within the current stackframe.
+     */
+    bool isStackAddress(triton::uint64 ptr);
+
+
+    /**
+     * Check if an address belongs to the heap.
+     * @param ptr - Address to check
+     * @return true if the address is within the heap address space.
+     */
+    bool isHeapAddress(triton::uint64 ptr);
 };
 
 #endif

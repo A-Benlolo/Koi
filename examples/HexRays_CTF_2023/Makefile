@@ -12,7 +12,7 @@ SRC = main.cpp
 EXE = HexRays_CTF_2023
 
 all:
-	$(MAKE) -C ../../ -f Makefile release
+	$(MAKE) -C ../../ -f Makefile install
 	$(MAKE) $(EXE)
 	
 

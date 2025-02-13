@@ -1,13 +1,16 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <vector>
 #include <triton/context.hpp>
 #include <triton/x86Specifications.hpp>
 #include <triton/ast.hpp>
-#include "Swimmer.h"
-#include "Elfivator.h"
+#include "Koi/buffer.h"
+#include "Koi/stackframe.h"
+#include "Koi/swimmer.h"
+#include "elfivator.h"
 
 
 /********************/
@@ -93,6 +96,9 @@ Swimmer::Swimmer(const std::string& filein) : triton::Context(triton::arch::ARCH
     symbolizeRegister(registers.x86_xmm14, "symbolic_xmm14");
     symbolizeRegister(registers.x86_xmm15, "symbolic_xmm15");
 
+    // Initialize the stackframe as not existing
+    stackframes.push_back(Stackframe(STACK_START, 0));
+
     // Load the bytes using Elfivator
     Elfivator e = Elfivator(filein);
     for(auto& section : e.sections) {
@@ -112,7 +118,7 @@ void Swimmer::setPc(triton::uint64 x) {
 
 
 /**
- * Explores the memory pool from the instruction pointer, respecting hooks
+ * Explores the memory pool from the instruction pointer, respecting hooks and injections
  * @param target - Desired address to execute
  * @param maxVisits - Maximum number of times to execute the same instruction
  * @param maxDepth - Maximum fork depth of an execution branch
@@ -185,6 +191,11 @@ bool Swimmer::explore(triton::uint64 target, uint maxVisits, uint maxDepth) {
             return false;
         }
 
+        // Handle stackframe information
+        // This idoes not disqualify other handlers
+        __handleStackAllocation(insn);
+        __handelStackReference(insn);
+
         // Break on halt
         if(insnType == triton::arch::x86::ID_INS_HLT)
             break;
@@ -194,6 +205,9 @@ bool Swimmer::explore(triton::uint64 target, uint maxVisits, uint maxDepth) {
             if(getConcreteRegisterValue(registers.x86_rip) == 0) {
                 std::cout << "\033[31mEnd of Path Reached\033[0m" << std::endl;
                 break;
+            } else if (verbosity & SV_STACK) {
+                stackframes.pop_back();
+                std::cout << "\033[1mEnd of stackframe\033[0m" << std::endl;
             }
         }
 
@@ -246,9 +260,14 @@ bool Swimmer::explore(triton::uint64 target, uint maxVisits, uint maxDepth) {
                                 std::cout << "\t" << pair.first << ": "<< pair.second << std::endl;
                             }
                         }
+
+                        // TODO: Save and restore all registers, not just RBP
+                        // TODO: This will need to be done for memory as well
+                        triton::uint64 rbpBefore = triton::uint64(getConcreteRegisterValue(registers.x86_rbp));
                         if(explore(target, maxVisits, maxDepth))
                             return true;
                         cnstrs.pop_back();
+                        setConcreteRegisterValue(registers.x86_rbp, rbpBefore);
 
                         // Restore to fallthrough
                         if(verbosity & SV_BRANCH)
@@ -388,11 +407,11 @@ std::string Swimmer::readString(triton::uint64 ptr) {
     std::stringstream ss;
     unsigned char c = getConcreteMemoryAreaValue(ptr, 1)[0];
     while(c != '\0') {
-        if(!isConcreteMemoryValueDefined(ptr, 1))
+        if(!isConcreteMemoryValueDefined(ptr))
             break;
         ss << c;
         ptr++;
-        c = getConcreteMemoryAreaValue(ptr, 1)[0];
+        c = getConcreteMemoryValue(ptr);
     }
     return ss.str();
 }
@@ -404,16 +423,25 @@ std::string Swimmer::readString(triton::uint64 ptr) {
  * @param ptr - Address to be symbolized.
  * @param sink - Address at which the memory was symbolized.
  * @param len - Length of the memory access.
+ * @return the SharedSymbolicVariables of the memory.
  */
-void Swimmer::symbolizeNamedMemory(std::string id, triton::uint64 ptr, triton::uint64 sink, triton::uint64 len) {
-    std::stringstream ss;
+Buffer Swimmer::symbolizeNamedMemory(std::string id, triton::uint64 ptr, triton::uint64 sink, size_t len) {
+    // Create the buffer
+    Buffer b = Buffer(id, sink, ptr, len);
+
+    // Create the symbolic variables
     triton::arch::MemoryAccess mem;
-    for(triton::uint64 i = 0; i < len; i++) {
+    std::stringstream ss;
+    for(size_t i = 0; i < len; i++) {
         mem = triton::arch::MemoryAccess(ptr + i, 1);
-        ss << id << "<--0x" << std::hex << sink << "[0x" << i << "]";
-        symbolizeMemory(mem, ss.str());
+        ss << b.alias << "[0x" << i << "]";
+        b.vars.push_back(symbolizeMemory(mem, ss.str()));
+        clearConcreteMemoryValue(mem);
         ss.str(std::string());
     }
+
+    // Return the resulting buffer  
+    return b;
 }
 
 
@@ -423,21 +451,334 @@ void Swimmer::symbolizeNamedMemory(std::string id, triton::uint64 ptr, triton::u
  * @param ptr - Address to be symbolized.
  * @param sink - Address at which the memory was symbolized.
  * @param sz - Size of the memory access.
+ * @return the Buffer for the memory
  */
-void Swimmer::symbolizeNamedMemoryChunk(std::string id, triton::uint64 ptr, triton::uint64 sink, ushort sz) {
+triton::engines::symbolic::SharedSymbolicVariable Swimmer::symbolizeNamedMemoryChunk(std::string id, triton::uint64 ptr, triton::uint64 sink, ushort sz) {
     if(sz == 0)
-        return;
+        return nullptr;
     
     triton::arch::MemoryAccess mem = triton::arch::MemoryAccess(ptr, sz);
     std::stringstream ss;
     ss << id << "<--0x" << std::hex << sink << std::dec;
-    symbolizeMemory(mem, ss.str());
+    return symbolizeMemory(mem, ss.str());
 }
+
+
+/**
+ * Allocate a chunk of heap memory.
+ * @param id - Identifying name for the memory (fgets, strcpy, etc).
+ * @param sink - Address at which the memory was symbolized.
+ * @param len - Length of the memory access.
+ * @return the address the allocation begins at.
+ */
+triton::uint64 Swimmer::allocateHeapMemory(std::string id, triton::uint64 sink, size_t len) {
+    // Validate length
+    if(len == 0) return 0;
+
+    // Start search at beginning of heap
+    triton::uint64 ptr = HEAP_START;
+
+    // Find starting address for chunk
+    while(ptr < HEAP_END) {
+        if(!isConcreteMemoryValueDefined(ptr) && !isMemorySymbolized(ptr) && !isHeapAllocated(ptr, len)) {
+            triton::uint64 i;
+            for(i = 1; i < len; i++) {
+                if(isConcreteMemoryValueDefined(ptr+i) || isMemorySymbolized(ptr+i))
+                    break;
+            }
+            if(i == len) break;
+            else ptr += i;
+        }
+        else ptr += 1;
+    }
+
+    // Validate enough memory
+    if(ptr + len > HEAP_END) return 0;
+
+    // Create the buffer
+    Buffer b = symbolizeNamedMemory(id, ptr, sink, len);
+    heapAllocations.emplace(ptr, b);
+    if(verbosity & SV_ALLOC) {
+        std::cout << "\033[1mAllocated " << len << " bytes @ 0x"
+                  << std::hex << ptr << std::dec << "\033[0m" << std::endl;
+    }
+
+    // Return the address for allocation
+    return ptr;
+}
+
+
+/**
+ * Free a chunk of heap memory.
+ * @param ptr - Starting address of the chunk.
+ * @param sink - Address at which the buffer can be declared free'd.
+ * @return true if successfully free'd, false if not allocated or already free'd.
+ */
+bool Swimmer::freeHeapMemory(triton::uint64 ptr, triton::uint64 sink) {
+    for(auto &pair : heapAllocations) {
+        if(ptr == pair.first) {
+            if(verbosity & SV_ALLOC) {
+                std::cout << "\033[1mFreeing pointer @ 0x"
+                          << std::hex << ptr << std::dec << "\033[0m" << std::endl;
+            }
+            return pair.second.kill(sink);
+        }
+    }
+    return false;
+}
+
+
+/**
+ * Check if an address of heap memory is live.
+ * @param ptr - Address of the chunk
+ * @param strict - If true, the address must start a chunk (default=false).
+ * @return true if the heap memory at ptr is alive.
+ */
+bool Swimmer::statHeapMemory(triton::uint64 ptr, bool strict) {
+    for(auto &pair : heapAllocations) {
+        triton::uint64 lo = pair.first;
+        triton::uint64 hi = lo + pair.second.getSize() - 1;
+        if(ptr == lo)
+            return pair.second.stat();
+        if(!strict && ptr <= hi && ptr >= lo) {
+            return pair.second.stat();
+        }
+    }
+    return false;
+}
+
+
+/**
+ * Get the origin of a pointer in the heap.
+ * @param ptr - Address of the pointer.
+ * @param strict - If true, the address must start a chunk (default=false)
+ * @return the origin of ptr.
+ */
+triton::uint64 Swimmer::getHeapOrigin(triton::uint64 ptr, bool strict) {
+    for(auto &pair : heapAllocations) {
+        triton::uint64 lo = pair.first;
+        triton::uint64 hi = lo + pair.second.getSize() - 1;
+        if(ptr == lo)
+            return pair.second.getOrigin();
+        if(!strict && ptr <= hi && ptr >= lo) {
+            return pair.second.getOrigin();
+        }
+    }
+    return 0;
+}
+
+
+/**
+ * Get the origin of a pointer in the heap.
+ * @param ptr - Address of the pointer.
+ * @param strict - If true, the address must start a chunk (default=false)
+ * @return the origin of ptr.
+ */
+triton::uint64 Swimmer::getHeapSink(triton::uint64 ptr, bool strict) {
+    for(auto &pair : heapAllocations) {
+        triton::uint64 lo = pair.first;
+        triton::uint64 hi = lo + pair.second.getSize() - 1;
+        if(ptr == lo)
+            return pair.second.getSink();
+        if(!strict && ptr <= hi && ptr >= lo) {
+            return pair.second.getSink();
+        }
+    }
+    return 0;
+}
+
+
+/**
+ * Check if any bytes in a heap memory range has been allocated.
+ * The state of the memory is not checked.
+ * @param ptr - Start of memory range.
+ * @param len - Length of memory range.
+ * @returns true if any bytes [ptr, ptr+len-1] have been allocated.
+ */
+bool Swimmer::isHeapAllocated(triton::uint64 ptr, size_t len) {
+    for(auto &pair : heapAllocations) {
+        triton::uint64 lo = pair.first;
+        triton::uint64 hi = lo + pair.second.getSize() - 1;
+        if(ptr <= hi && ptr + len - 1 >= lo)
+            return true;
+    }
+    return false;
+}
+
+
+/**
+ * Get the length of an allocation on the heap
+ * @param ptr - Address of the allocation.
+ * @return the length of allocation, including 0 for no allocation.
+ */
+size_t Swimmer::getAllocatedLength(triton::uint64 ptr) {
+    auto it = heapAllocations.find(ptr);
+    if(it != heapAllocations.end())
+        return it->second.getSize();
+    return 0;
+}
+
+
+/**
+ * Get the alias of a Buffer
+ * @param ptr - Address of the buffer.
+ * @return the alias of the buffer, or UNDEFINED if it doesn't exist
+ */
+std::string Swimmer::getBufferAlias(triton::uint64 ptr) {
+    auto it = heapAllocations.find(ptr);
+    if(it != heapAllocations.end())
+        return it->second.alias;
+    return "UNDEFINED";
+}
+
+
+/**
+ * Get the deduced length of a buffer on the stack.
+ * This is a "best guess" that uses stackframe size and accesses.
+ * @param ptr - Beginning of the buffer.
+ * @return the deduced length of the buffer at ptr on the stack.
+ */
+size_t Swimmer::getStackBufferLength(triton::uint64 ptr) {
+    for(Stackframe &sf : stackframes) {
+        triton::uint64 hi = sf.getAddress();
+        triton::uint64 lo = hi - sf.getSize();
+        if(ptr <= hi && ptr >= lo) {
+            ptr = hi - ptr;
+            return sf.getAccessGap(ptr);
+        }
+    }
+    return 0;
+}
+
+
+/**
+ * Get the current stackframe.
+ * @return the current stackframe, or nullptr if there is no frame.
+ */
+Stackframe *Swimmer::getStackframe() {
+    if(stackframes.size() == 0)
+        return nullptr;
+    return &stackframes.back();
+}
+
+
+/**
+ * Get the stackframe containing an addresss.
+ * @param ptr - Address that the stackframe should contain.
+ * @return the stackframe containing ptr, or nullptr if there is no frame.
+ */
+Stackframe *Swimmer::getStackframe(triton::uint64 ptr) {
+    for(Stackframe &sf : stackframes) {
+        triton::uint64 hi = sf.getAddress();
+        triton::uint64 lo = hi - sf.getSize();
+        if(ptr <= hi && ptr >= lo) {
+            ptr = hi - ptr;
+            return &sf;
+        }
+    }
+    return nullptr;
+}
+
+
+/**
+ * Check if an address belongs to the stack.
+ * @param ptr - Address to check.
+ * @return true if the address is within the stack.
+ */
+bool Swimmer::isStackAddress(triton::uint64 ptr) {
+    if(stackframes.size() == 0)
+        return false;
+    return ptr >= STACK_END && ptr <= STACK_START;
+}
+
+
+/**
+ * Check if an address belongs to the heap.
+ * @param ptr - Address to check
+ * @return true if the address is within the heap address space.
+ */
+bool Swimmer::isHeapAddress(triton::uint64 ptr) {
+    return ptr >= HEAP_START && ptr <= HEAP_END;
+}
+
 
 
 /*********************/
 /* PRIVATE FUNCTIONS */
 /*********************/
+
+
+/**
+ * Handle changing of the stack pointer to allocate the stackframe
+ * @param insn - Potential instruction to perform the change.
+ * @return true if the stackframe was allocated
+ */
+bool Swimmer::__handleStackAllocation(triton::arch::Instruction insn) {
+    if(insn.getType() == triton::arch::x86::ID_INS_SUB && insn.operands[0] == registers.x86_rsp) {
+        // Update the stackframe
+        triton::uint64 base = triton::uint64(getConcreteRegisterValue(registers.x86_rbp));
+        size_t sz = insn.operands[1].getImmediate().getValue();
+        if(sz > 0xFF00000000000000)
+            return false;
+        stackframes.back().update(base, sz);
+
+        // Create the symbolic variables
+        triton::arch::MemoryAccess mem;
+        std::stringstream ss;
+        for(size_t i = 0; i < sz; i++) {
+            mem = triton::arch::MemoryAccess(base - i, 1);
+            ss << "stackframe@0x" << std::hex
+               << insn.getAddress() << "_0x" << std::hex
+               << base << "[-0x" << i << "]";
+            symbolizeMemory(mem, ss.str());
+            clearConcreteMemoryValue(mem);
+            ss.str(std::string());
+        }
+
+        if(verbosity & SV_STACK) {
+            std::cout << "\033[1mIdentified stackframe @ 0x"
+                      << std::hex << base << " has 0x"
+                      << sz << " bytes\033[0m" << std::dec << std::endl;
+        }
+
+        return true;
+    }
+    return false;
+}
+
+
+/**
+ * Handle accessing of the stack
+ * @param insn - Potential instruction to perform access.
+ * @return true if the stackframe was accessed
+ */
+bool Swimmer::__handelStackReference(triton::arch::Instruction insn) {
+    // A stack reference has two operands
+    if(insn.operands.size() == 2) {
+        bool refFound = false;
+        for(auto &op : insn.operands) {
+
+            // A stack reference operand is memory based on RBP
+            if(op.getType() == triton::arch::OP_MEM) {
+                triton::arch::MemoryAccess memSrc = op.getMemory();
+                if(memSrc.getBaseRegister() == registers.x86_rbp) {
+
+                    // Note the displacement as an access
+                    triton::uint64 disp = -memSrc.getDisplacement().getValue();
+                    bool newAccess = stackframes.back().addAccess(disp);
+                    refFound = true;
+
+                    if(newAccess && verbosity & SV_STACK) {
+                        std::cout << "\033[1mNew access to stackframe @ 0x" << std::hex
+                                  << disp << "\033[0m" << std::endl;
+                    }
+                }
+            }
+        }
+        return refFound;
+    }
+    return false;
+}
 
 
 /**
@@ -456,12 +797,13 @@ bool Swimmer::__handleCall(uint localFid, triton::uint64 pc, triton::arch::Instr
         if(isHooked || isUndefined) {
             // Perform function hooks
             if(isHooked) {
-                for(FuncHook& callback : funcHooks[dst]) {
-                    callback(this, pc);
-                }
                 if(verbosity & SV_INSN)
                     std::cout << "[" << localFid << "] " << "(" << depth << ") "
-                                << "0x------  [func hook]" << std::endl;
+                              << "0x------  [func hook]" << std::endl;
+                for(FuncHook& callback : funcHooks[dst]) {
+                    triton::uint64 retVal = callback(this, pc);
+                    setConcreteRegisterValue(registers.x86_rax, retVal);
+                }
             }
             // Just step over
             else if (verbosity & SV_INSN)
@@ -470,6 +812,8 @@ bool Swimmer::__handleCall(uint localFid, triton::uint64 pc, triton::arch::Instr
             triton::uint512 correctedRsp = getConcreteRegisterValue(registers.x86_rsp) + 8;
             setConcreteRegisterValue(registers.x86_rsp, correctedRsp);
             setConcreteRegisterValue(registers.x86_rip, insn.getNextAddress());
+        } else {
+            stackframes.push_back(Stackframe());
         }
         return isHooked || isUndefined;
     }
@@ -555,10 +899,11 @@ void Swimmer::__printRegisters(bool all) {
             triton::uint64 val = triton::uint64(getConcreteRegisterValue(reg));
             std::cout << " = 0x" << val;
 
-            // Contiually print memory pointers until not concrete
+            // Continually print memory pointers until not concrete
             triton::arch::MemoryAccess ptr = triton::arch::MemoryAccess(val, 8);
             while(!isMemorySymbolized(ptr) && isConcreteMemoryValueDefined(ptr)) {
                 val = triton::uint64(getConcreteMemoryValue(ptr));
+                if(val == ptr.getAddress()) break;
                 std::cout << " -> 0x" << val;
                 ptr = triton::arch::MemoryAccess(val, 8);
             }

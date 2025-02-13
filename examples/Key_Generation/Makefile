@@ -12,7 +12,7 @@ SRC = main.cpp
 EXE = Key_Generation
 
 all:
-	$(MAKE) -C ../../ -f Makefile release
+	$(MAKE) -C ../../ -f Makefile install
 	$(MAKE) $(EXE)
 	
 

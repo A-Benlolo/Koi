@@ -2,24 +2,8 @@
 #include <iostream>
 #include <string>
 #include <vector>
-#include <Swimmer.h>
-
-
-/** On strlen, calculate string length of a concrete string */
-void strlen(Swimmer *s, triton::uint64 addr) {
-    // Get registers for processing
-    auto rdi = s->registers.x86_rdi;
-    auto rax = s->registers.x86_rax;
-
-    // Get the address of the string
-    triton::uint64 str_ptr = triton::uint64(s->getConcreteRegisterValue(rdi));
-
-    // Read the concrete string from memory
-    std::string str = s->readString(str_ptr);
-
-    // Store the length of the string in RAX (return register)
-    s->setConcreteRegisterValue(rax, str.size());
-}
+#include <Koi/bait.h>
+#include <Koi/swimmer.h>
 
 
 /** Print information on the parameters passed to generate_password */
@@ -60,7 +44,7 @@ int main(int argc, char *argv[]) {
     swimmer.verbosity = Swimmer::SV_CTRLFLOW;
 
     // Hook the strlen function
-    swimmer.hookFunction(0x1010c0, strlen);
+    swimmer.hookFunction(0x1010c0, koi_strlen);
 
     // Hooks to demonstrate solution
     swimmer.hookInstruction(0x10134d, checkParams);

@@ -2,12 +2,19 @@
 #include <iostream>
 #include <string>
 #include <vector>
-#include <Swimmer.h>
+#include <Koi/bait.h>
+#include <Koi/swimmer.h>
 
 
 /** Restrict input to be the minimal viable length (including a null byte)
     I've successfully generated keys of length 128, but it took 1m20s. */
 const static size_t INPUT_LENGTH = 6;
+
+
+/** Input is eventually copied to this address, so we apply constraints
+    there to make the code a little easier to follow.
+ */
+const static triton::uint64 PASS_ADDR = 0x104040;
 
 
 /** Spoof the length of argv[1] in check_id_xor and check_id_sum */
@@ -19,7 +26,7 @@ void spoofLength(Swimmer *s, triton::arch::Instruction insn) {
 /** Implement guard to have a minimum argv[1] length of 5 */
 void constraint1(Swimmer *s, triton::arch::Instruction insn) {
     // Get the pointer to the data and AST context
-    triton::uint64 ptr = triton::uint64(s->getConcreteRegisterValue(s->registers.x86_rdi));
+    triton::uint64 ptr = PASS_ADDR;
     triton::ast::SharedAstContext ac = s->getAstContext();
 
     // Symbolize newly known memory
@@ -49,7 +56,7 @@ void constraint1(Swimmer *s, triton::arch::Instruction insn) {
 /** Implement guard to have a real argv[1] length of INPUT_LENGTH */
 void constraint2(Swimmer *s, triton::arch::Instruction insn) {
     // Get the pointer to the data and AST context
-    triton::uint64 ptr = triton::uint64(s->getConcreteRegisterValue(s->registers.x86_rdi));
+    triton::uint64 ptr = PASS_ADDR;
     triton::ast::SharedAstContext ac = s->getAstContext();
 
     // Symbolize newly known memory
@@ -82,7 +89,7 @@ void constraint2(Swimmer *s, triton::arch::Instruction insn) {
 /** Implement guard to have all non-null characters in argv[1] be numeric-ASCII */
 void constraint3(Swimmer *s, triton::arch::Instruction insn) {
     // Get the pointer to the data and AST context
-    triton::uint64 ptr = triton::uint64(s->getConcreteRegisterValue(s->registers.x86_rdi));
+    triton::uint64 ptr = PASS_ADDR;
     triton::ast::SharedAstContext ac = s->getAstContext();
 
     // Constrain memory
@@ -104,30 +111,6 @@ void constraint3(Swimmer *s, triton::arch::Instruction insn) {
 }
 
 
-/** On strycpy, constrain global PASS to be equal to argv[1] */
-void strcpy(Swimmer *s, triton::uint64 addr) {
-    // Get concrete addresses of strings
-    triton::uint64 dst_ptr = triton::uint64(s->getConcreteRegisterValue(s->registers.x86_rdi));
-    triton::uint64 src_ptr = triton::uint64(s->getConcreteRegisterValue(s->registers.x86_rsi));
-
-    // Symbolize the destinination bytes
-    for(size_t i = 0; i < INPUT_LENGTH; i++) {
-        std::stringstream ss;
-        ss << "PASS[0x" << std::hex << i << "]" << std::dec;
-        triton::arch::MemoryAccess mem = triton::arch::MemoryAccess(dst_ptr + i, 1);
-        s->symbolizeMemory(mem, ss.str());
-    }
-
-    // Constraint the destinination to be equal to the source
-    triton::ast::SharedAstContext ac = s->getAstContext();
-    for(size_t i = 0; i < INPUT_LENGTH; i++) {
-        auto srcByteAst = s->getSymbolicMemory(src_ptr + i)->getAst();
-        auto dstByteAst = s->getSymbolicMemory(dst_ptr + i)->getAst();
-        s->cnstrs.push_back(ac->equal(srcByteAst, dstByteAst));
-    }
-}
-
-
 /** Example to showcase crackmes.one sample (key generation) */
 int main(int argc, char *argv[]) {
     // Print a banner
@@ -144,11 +127,14 @@ int main(int argc, char *argv[]) {
     swimmer.setConcreteRegisterValue(swimmer.registers.x86_rsi, 0xBA5EBA11);
     swimmer.setConcreteMemoryAreaValue(0xBA5EBA11 + 8, { 0xEF, 0xBE, 0xAD, 0xDE });
 
+    // Immediately symbolize the location of a global variable
+    swimmer.symbolizeNamedMemory("PASS", PASS_ADDR, 0x10130a, INPUT_LENGTH);
+
     // Hook checks that rely on library functions
     swimmer.hookInstruction(0x101357, constraint1);
     swimmer.hookInstruction(0x101370, constraint2);
     swimmer.hookInstruction(0x1013A9, constraint3);
-    swimmer.hookFunction(0x1010a0, strcpy);
+    swimmer.hookFunction(0x1010a0, koi_strcpy);
     swimmer.hookInstruction(0x10122a, spoofLength);
     swimmer.hookInstruction(0x1012db, spoofLength);
 

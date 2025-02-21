@@ -50,7 +50,7 @@ private:
      * @param insn - Potential instruction to perform access.
      * @return true if the stackframe was accessed
      */
-    bool __handelStackReference(triton::arch::Instruction insn);
+    bool __handleStackReference(triton::arch::Instruction insn);
 
     /**
      * Handle CALL instructions, respecting unknown memory and hooks and injections
@@ -262,6 +262,22 @@ public:
      * @returns true if any bytes [ptr, ptr+len-1] have been allocated.
      */
     bool isHeapAllocated(triton::uint64 ptr, size_t len);
+
+
+    /**
+     * Check if an address points to a heap allocation.
+     * @param ptr - Address to check.
+     * @return true if the address points to a heap allocation.
+     */
+    bool isHeapStub(triton::uint64 ptr);
+
+
+    /**
+     * Get the heap pointer that owns an address.
+     * @param ptr - Address to query.
+     * @return the owning heap address, including 0 for no owner.
+     */
+    triton::uint64 getHeapStub(triton::uint64 ptr);
     
 
     /**

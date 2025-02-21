@@ -194,7 +194,7 @@ bool Swimmer::explore(triton::uint64 target, uint maxVisits, uint maxDepth) {
         // Handle stackframe information
         // This idoes not disqualify other handlers
         __handleStackAllocation(insn);
-        __handelStackReference(insn);
+        __handleStackReference(insn);
 
         // Break on halt
         if(insnType == triton::arch::x86::ID_INS_HLT)
@@ -607,6 +607,36 @@ bool Swimmer::isHeapAllocated(triton::uint64 ptr, size_t len) {
 
 
 /**
+ * Check if an address points to a heap allocation.
+ * @param ptr - Address to check.
+ * @return true if the address points to a heap allocation.
+ */
+bool Swimmer::isHeapStub(triton::uint64 ptr) {
+    for(auto &pair : heapAllocations) {
+        if(pair.first == ptr)
+            return true;
+    }
+    return false;
+}
+
+
+/**
+ * Get the heap pointer that owns an address.
+ * @param ptr - Address that to query.
+ * @return The owning heap address, including 0 for no owner.
+ */
+triton::uint64 Swimmer::getHeapStub(triton::uint64 ptr) {
+    for(auto &pair : heapAllocations) {
+        triton::uint64 lo = pair.first;
+        triton::uint64 hi = lo + pair.second.getSize() - 1;
+        if(ptr <= hi && ptr >= lo)
+            return lo;
+    }
+    return 0;
+}
+
+
+/**
  * Get the length of an allocation on the heap
  * @param ptr - Address of the allocation.
  * @return the length of allocation, including 0 for no allocation.
@@ -752,7 +782,7 @@ bool Swimmer::__handleStackAllocation(triton::arch::Instruction insn) {
  * @param insn - Potential instruction to perform access.
  * @return true if the stackframe was accessed
  */
-bool Swimmer::__handelStackReference(triton::arch::Instruction insn) {
+bool Swimmer::__handleStackReference(triton::arch::Instruction insn) {
     // A stack reference has two operands
     if(insn.operands.size() == 2) {
         bool refFound = false;

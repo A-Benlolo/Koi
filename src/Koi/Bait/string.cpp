@@ -8,6 +8,79 @@ triton::uint64 __deduceStringSize(Swimmer *s, triton::uint64 ptr);
 
 
 /**
+ * A function hook to robustly perform strchr
+ * @param s - Swimmer responsible for the search.
+ * @param addr - Address that called the original function.
+ * @return a pointer to the first occurance of the requested character or null.
+ */
+ triton::uint64 koi_strchr(Swimmer *s, triton::uint64 addr) {
+    // Assume the pointer is concrete
+    triton::uint64 ptr_in = __getSatisfiableRegisterValue(s, s->registers.x86_rdi);
+
+    // Concrete string
+    if(!s->isMemorySymbolized(ptr_in)) {
+        // Concrete character
+        if(!s->isRegisterSymbolized(s->registers.x86_rsi)) {
+            triton::uint64 chr = triton::uint64(s->getConcreteRegisterValue(s->registers.x86_rsi));
+            triton::uint8 byte;
+            do {
+                byte = s->getConcreteMemoryValue(ptr_in);
+                if(byte == chr)
+                    return ptr_in;
+                ptr_in++;
+            } while(byte != 0);
+        }
+
+        // Symbolic character
+        else {
+            auto ast = s->getSymbolicRegister(s->registers.x86_rsi)->getAst();
+            auto astCtxt = s->getAstContext();
+            triton::uint8 byte;
+            do {
+                byte = s->getConcreteMemoryValue(ptr_in);
+                auto model = s->getModel(astCtxt->equal(ast, astCtxt->bv(byte, 8)));
+                if(model.size() > 0)
+                    return triton::uint64(model.begin()->second.getValue());
+                ptr_in++;
+            } while(byte != 0);
+        }
+    }
+
+    // Symbolic string
+    else {
+        // Use strlen to determine length of source
+        triton::uint64 full_len = koi_strlen(s, 0);
+        auto astCtxt = s->getAstContext();
+
+        // Concrete character, find earliest match
+        if(!s->isRegisterSymbolized(s->registers.x86_rsi)) {
+            triton::uint64 chr = triton::uint64(s->getConcreteRegisterValue(s->registers.x86_rsi));
+            for(triton::uint64 i = 0; i < full_len; i++) {
+                auto ast = s->getSymbolicMemory(ptr_in + i)->getAst();
+                auto isMatch = astCtxt->equal(ast, astCtxt->bv(chr, 8));
+                if(s->getModel(isMatch).size() > 0)
+                    return ptr_in + i;
+            }
+        }
+
+        // Symbolic character, find earliest match
+        else {
+            auto chrAst = s->getSymbolicRegister(s->registers.x86_rsi)->getAst();
+            for(triton::uint64 i = 0; i < full_len; i++) {
+                auto strAst = s->getSymbolicMemory(ptr_in + i)->getAst();
+                auto isMatch = astCtxt->equal(chrAst, strAst);
+                if(s->getModel(isMatch).size() > 0)
+                    return ptr_in + i;
+            }
+        }
+    }
+    
+    // No answer fouund, return null
+    return 0;
+ }
+
+
+/**
  * A function hook to robustly perform a string copy.
  * @param s - Swimmer responsible for the copy.
  * @param addr - Address that called the original function.
@@ -20,7 +93,7 @@ triton::uint64 koi_strcpy(Swimmer *s, triton::uint64 addr) {
 
     // Use strlen to determine length of source
     s->setConcreteRegisterValue(s->registers.x86_rdi, sptr);
-    triton::uint64 slen = koi_strlen(s, sptr);
+    triton::uint64 slen = koi_strlen(s, 0);
     s->setConcreteRegisterValue(s->registers.x86_rdi, dptr);
 
     // Perform the copy, cutting off after slen bytes if there's an overflow

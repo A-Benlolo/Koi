@@ -211,7 +211,31 @@ bool isHeapAllocated(triton::uint64 ptr, size_t len);
 Check if any bytes in a memory range has been allocated. The state of the memory is not checked.
 - `ptr`: Start of memory range.
 - `len`: Length of memory range.
-true if any bytes \[ptr, ptr+len-1\] have been allocated.
+Returns true if any bytes \[ptr, ptr+len-1\] have been allocated.
+
+
+```cpp
+bool isHeapStub(triton::uint64 ptr);
+```
+Check if an address points to a heap allocation.
+- `ptr`: Address to check.
+Returns true if the address points to a heap allocation.
+
+
+```cpp
+triton::uint64 getHeapStub(triton::uint64 ptr);
+```
+Get the heap pointer that owns an address.
+- `ptr`: Address to query.
+Returns the owning heap address, including 0 for no owner.
+
+
+```cpp
+size_t getAllocatedLength(triton::uint64 ptr);
+```
+Get the length of an allocation on the heap
+- `ptr`: Address of the allocation.
+Return the length of allocation, including 0 for no allocation.
 
 
 ```cpp

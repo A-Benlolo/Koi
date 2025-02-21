@@ -19,6 +19,7 @@ triton::uint64 koi_fgets(Swimmer *s, triton::uint64 addr);
 ## string.h
 
 ```cpp
+triton::uint64 koi_strchr(Swimmer *s, triton::uint64 addr);
 triton::uint64 koi_strcpy(Swimmer *s, triton::uint64 addr);
 triton::uint64 koi_strlen(Swimmer *s, triton::uint64 addr);
 triton::uint64 koi_strncpy(Swimmer *s, triton::uint64 addr);

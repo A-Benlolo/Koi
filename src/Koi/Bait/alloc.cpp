@@ -15,7 +15,7 @@ triton::uint64 koi_calloc(Swimmer *s, triton::uint64 addr) {
     if(cnt == 0) return 0;
 
     // Get and validate the size of elements to allocate for
-    triton::uint64 sz = __getSatisfiableRegisterValue(s, s->registers.x86_rdi);
+    triton::uint64 sz = __getSatisfiableRegisterValue(s, s->registers.x86_rsi);
     if(sz == 0) return 0;
 
     // Allocate and symbolize an available memory chunk

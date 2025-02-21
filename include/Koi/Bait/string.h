@@ -7,6 +7,15 @@
 
 
 /**
+ * A function hook to robustly perform strchr
+ * @param s - Swimmer responsible for the search.
+ * @param addr - Address that called the original function.
+ * @return a pointer to the first requested character in the string.
+ */
+triton::uint64 koi_strchr(Swimmer *s, triton::uint64 addr);
+
+
+/**
  * A function hook to robustly perform a string copy.
  * @param s - Swimmer responsible for the copy.
  * @param addr - Address that called the original function.

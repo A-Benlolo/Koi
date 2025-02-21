@@ -48,6 +48,20 @@ public:
      * @param s - New size of the stackframe
      */
     void update(triton::uint64 a, size_t s);
+
+
+    /**
+     * Expand a stackframe by a set number of bytes
+     * @param b - Number of bytes to extend by.
+     */
+    void extend(size_t b);
+
+
+    /**
+     * Shrink a stackframe by a set number of bytes
+     * @param b - Number of bytes to shrink by.
+     */
+     void shrink(size_t b);
 };
 
 

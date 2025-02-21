@@ -67,3 +67,22 @@ void Stackframe::update(triton::uint64 a, size_t s) {
     sz = s;
     accesses = {0, s};
 }
+
+
+/**
+ * Expand a stackframe by a set number of bytes
+ * @param b - Number of bytes to extend by.
+ */
+ void Stackframe::extend(size_t b) {
+    sz += b;
+    addAccess(triton::uint64(sz));
+}
+
+
+/**
+ * Shrink a stackframe by a set number of bytes
+ * @param b - Number of bytes to shrink by.
+ */
+ void Stackframe::shrink(size_t b) {
+    sz -= b;
+}

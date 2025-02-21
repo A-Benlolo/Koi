@@ -40,6 +40,20 @@ Update the stackframe information
 - `s` - Size of the stackframe
 
 
+```cpp
+void extend(size_t b);
+```
+Expand a stackframe by a set number of bytes
+- `b`: Number of bytes to extend by.
+
+
+```cpp
+void shrink(size_t b);
+```
+Shrink a stackframe by a set number of bytes
+- `b`: Number of bytes to shrink by.
+
+
 ## Private
 
 ### Private Class Members
